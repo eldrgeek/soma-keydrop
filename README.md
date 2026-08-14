@@ -74,6 +74,16 @@ write path that didn't go through this sequence.
 | `KEYDROP_LIVE` | `false` in this build. Gates real delivery, real acks, and non-test asks. |
 | `KEYDROP_NETLIFY_PAT` | destination-adapter's own Netlify token — see `SOMA/keys/KEYRING.md` for scope/rotation notes |
 
+## Proof (INERT build, 2026-08-14)
+
+Full CSW build report, what's proven vs. mocked, and where Locke should look
+first: [`docs/BUILD-2026-08-14.md`](docs/BUILD-2026-08-14.md). Screenshots of
+the live authenticated stepper: [`docs/screenshots/`](docs/screenshots/).
+Re-runnable tests: `test/e2e.sh` (identity/resume/refusal via curl) and
+`test/local-success-path.mjs` (success path, Stripe probe mocked at the
+interface — no test Stripe account is accessible in this estate, said
+honestly in the build report).
+
 ## Running the CLI
 
 ```

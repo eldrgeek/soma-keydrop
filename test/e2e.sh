@@ -103,9 +103,19 @@ python3 bin/keydrop-ask show "$ASK_TOKEN"
 
 echo
 echo "== cleanup: deleting throwaway user and test ask =="
-WRONG_ID=$(curl -sS "$SUPABASE_URL/auth/v1/admin/users?filter=email.eq.$WRONG_EMAIL" \
+# NOTE: this admin endpoint's `filter` param is a substring match, not `eq` —
+# it does not accept operator syntax like `email.eq.X`. Substring-match on the
+# exact address and pick the exact match (there may be leftover users from
+# earlier runs sharing the "keydrop-test-wrong-identity" prefix).
+WRONG_ID=$(curl -sS "$SUPABASE_URL/auth/v1/admin/users?filter=$WRONG_EMAIL" \
   -H "apikey: $SUPABASE_SERVICE_KEY" -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
-  | python3 -c "import json,sys; d=json.load(sys.stdin); u=d.get('users') or d; print(u[0]['id'] if u else '')" 2>/dev/null || true)
+  | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+for u in d.get('users', []):
+    if u.get('email') == '$WRONG_EMAIL':
+        print(u['id']); break
+" 2>/dev/null || true)
 if [ -n "$WRONG_ID" ]; then
   curl -sS -X DELETE "$SUPABASE_URL/auth/v1/admin/users/$WRONG_ID" \
     -H "apikey: $SUPABASE_SERVICE_KEY" -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" -o /dev/null -w 'delete user HTTP %{http_code}\n'
