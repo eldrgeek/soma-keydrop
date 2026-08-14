@@ -1,0 +1,8 @@
+# Static site — no build step. Publish the repo root as-is.
+[build]
+  command = ""
+  publish = "."
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"

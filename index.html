@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0f1222" />
+    <title>SOMA KeyDrop</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔑</text></svg>" />
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+    <script src="js/soma-auth-config.js"></script>
+    <script src="js/soma-auth.js"></script>
+
+    <link rel="stylesheet" href="/vendor/soma-feedback/soma-feedback.css" />
+
+    <style>
+      :root {
+        --bg: #0f1222; --bg-2: #171a30; --panel: #1c2038; --border: #2c3157;
+        --text: #e8eaf6; --muted: #9aa0c8; --accent: #7c83ff; --accent-2: #4dd6a8;
+        --danger: #ff6b7a; --warn: #f4b860; --shadow: 0 8px 30px rgba(0,0,0,0.35);
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; }
+      body {
+        background: radial-gradient(1200px 600px at 80% -10%, #1a1f3d 0%, var(--bg) 55%);
+        color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        min-height: 100vh; padding: 40px 20px; line-height: 1.5;
+      }
+      .wrap { max-width: 560px; margin: 0 auto; }
+      .eyebrow { color: var(--accent); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700; }
+      h1 { margin: 6px 0 4px; font-size: 24px; }
+      .sub { margin: 0 0 8px; color: var(--muted); font-size: 14px; }
+      .test-banner {
+        background: rgba(244,184,96,0.12); border: 1px solid rgba(244,184,96,0.4); color: var(--warn);
+        border-radius: 10px; padding: 10px 14px; font-size: 12px; margin: 14px 0 22px; display: none;
+      }
+      .test-banner.show { display: block; }
+      .step {
+        background: var(--panel); border: 1px solid var(--border); border-radius: 16px;
+        padding: 22px 24px; margin-bottom: 16px; box-shadow: var(--shadow); opacity: 0.45;
+        transition: opacity 0.2s ease;
+      }
+      .step.active { opacity: 1; border-color: var(--accent); }
+      .step.done { opacity: 0.7; }
+      .step-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+      .step-num {
+        width: 26px; height: 26px; border-radius: 50%; background: var(--bg-2); border: 1px solid var(--border);
+        display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; flex-shrink: 0;
+      }
+      .step.done .step-num { background: var(--accent-2); border-color: var(--accent-2); color: #0f1222; }
+      .step.active .step-num { background: var(--accent); border-color: var(--accent); color: #fff; }
+      .step-title { font-size: 15px; font-weight: 600; }
+      .step-body { font-size: 13px; color: var(--muted); }
+      .scopes { list-style: none; padding: 0; margin: 10px 0; font-size: 13px; }
+      .scopes li { padding: 4px 0; padding-left: 20px; position: relative; }
+      .scopes li::before { content: "☑"; position: absolute; left: 0; color: var(--accent-2); }
+      button {
+        font-family: inherit; font-size: 14px; font-weight: 600; border-radius: 10px; padding: 11px 18px;
+        border: 1px solid transparent; cursor: pointer; transition: filter 0.12s ease; margin-top: 12px;
+      }
+      button.primary { background: var(--accent); color: #fff; }
+      button.primary:hover { filter: brightness(1.1); }
+      button.secondary { background: var(--bg-2); color: var(--text); border-color: var(--border); }
+      button:disabled { opacity: 0.5; cursor: default; }
+      input[type=password] {
+        width: 100%; background: var(--bg-2); border: 1px solid var(--border); color: var(--text);
+        border-radius: 10px; padding: 11px 12px; font-size: 14px; font-family: inherit; margin-top: 8px;
+        letter-spacing: 2px;
+      }
+      .msg { margin-top: 12px; font-size: 13px; border-radius: 10px; padding: 10px 12px; display: none; }
+      .msg.ok { display: block; background: rgba(77,214,168,0.12); color: var(--accent-2); border: 1px solid rgba(77,214,168,0.3); }
+      .msg.err { display: block; background: rgba(255,107,122,0.1); color: var(--danger); border: 1px solid rgba(255,107,122,0.3); }
+      .msg.warn { display: block; background: rgba(244,184,96,0.1); color: var(--warn); border: 1px solid rgba(244,184,96,0.3); }
+      .center { text-align: center; padding: 60px 0; color: var(--muted); }
+      .foot { margin-top: 24px; text-align: center; color: var(--muted); font-size: 11px; }
+      a.textlink { color: var(--accent); }
+    </style>
+  </head>
+  <body>
+    <div class="wrap" id="app">
+      <div class="center" id="loading">Loading…</div>
+    </div>
+
+    <script>
+      (function () {
+        var el = function (id) { return document.getElementById(id); };
+        var appEl = el('app');
+        var q = new URLSearchParams(location.search);
+        var askToken = q.get('ask');
+        var session = null;
+        var askState = null;
+
+        function baseDir() { return location.href.replace(/index\.html.*$/, '').replace(/\?.*$/, ''); }
+
+        function renderCenter(html) {
+          appEl.innerHTML = '<div class="center">' + html + '</div>';
+        }
+
+        function esc(s) {
+          return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+          });
+        }
+
+        async function api(path, opts) {
+          opts = opts || {};
+          var headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
+          if (session && session.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+          var res = await fetch('/.netlify/functions/' + path, {
+            method: opts.method || 'GET',
+            headers: headers,
+            body: opts.body ? JSON.stringify(opts.body) : undefined
+          });
+          var data = null;
+          try { data = await res.json(); } catch (e) { data = null; }
+          return { ok: res.ok, status: res.status, data: data };
+        }
+
+        function renderStepper() {
+          if (!askState) { renderCenter('No ask loaded.'); return; }
+          var a = askState;
+          var step = a.step;
+          var stateBadge = '';
+          if (a.state === 'completed') {
+            appEl.innerHTML =
+              '<div class="eyebrow">SOMA · KeyDrop</div><h1>Done</h1>' +
+              '<div class="step done"><div class="step-body">This ask is complete. The key has been delivered ' +
+              'and this page is now closed. You can close this tab.<br><br>' +
+              '<b>Please clear your clipboard</b> — we cannot do that for you from a web page.</div></div>';
+            return;
+          }
+          if (a.state === 'refused') {
+            appEl.innerHTML = '<div class="eyebrow">SOMA · KeyDrop</div><h1>Ask refused</h1>' +
+              '<div class="step done"><div class="step-body">This ask was refused. The requester has been notified ' +
+              'and can send a new one.</div></div>';
+            return;
+          }
+          if (a.state === 'expired') {
+            appEl.innerHTML = '<div class="eyebrow">SOMA · KeyDrop</div><h1>Ask expired</h1>' +
+              '<div class="step done"><div class="step-body">This ask expired. The requester has been notified ' +
+              'and can send a new one.</div></div>';
+            return;
+          }
+
+          var html = '<div class="eyebrow">SOMA · KeyDrop</div>' +
+            '<h1>' + esc(a.recipe.provider_label || a.provider) + ' key request</h1>' +
+            '<p class="sub">Requested by ' + esc(a.requester) + '. Three steps, one button each.</p>' +
+            (a.test_only ? '<div class="test-banner show">TEST ASK — inert build. No real key will be requested or stored.</div>' : '');
+
+          // Step 1
+          html += '<div class="step ' + (step > 1 ? 'done' : (step === 1 ? 'active' : '')) + '">' +
+            '<div class="step-head"><div class="step-num">' + (step > 1 ? '✓' : '1') + '</div>' +
+            '<div class="step-title">Log in to ' + esc(a.recipe.provider_label || a.provider) + '</div></div>' +
+            '<div class="step-body">Opens in a new tab. This KeyDrop tab stays put — switch back here when you\'re signed in.</div>';
+          if (step === 1) {
+            html += '<a href="' + esc(a.recipe.login_url) + '" target="_blank" rel="noopener"><button class="primary">Log in to ' + esc(a.recipe.provider_label) + '</button></a>' +
+              '<br><button class="secondary" id="attest-1">Done — I\'m logged in</button>';
+          }
+          html += '</div>';
+
+          // Step 2
+          html += '<div class="step ' + (step > 2 ? 'done' : (step === 2 ? 'active' : '')) + '">' +
+            '<div class="step-head"><div class="step-num">' + (step > 2 ? '✓' : '2') + '</div>' +
+            '<div class="step-title">Create the restricted key</div></div>';
+          if (step === 2) {
+            html += '<div class="step-body">Opens the key-creation page in a new tab. Match these settings exactly — ' +
+              'the checklist is the only prose here on purpose:</div>' +
+              '<ul class="scopes">' + (a.recipe.scopes || []).map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ul>' +
+              (a.recipe.suggested_name ? '<div class="step-body">Suggested name: <code>' + esc(a.recipe.suggested_name) + '</code></div>' : '') +
+              '<a href="' + esc(a.recipe.mint_url) + '" target="_blank" rel="noopener"><button class="primary">Create the restricted key</button></a>' +
+              '<br><button class="secondary" id="attest-2">Done — I created it</button>';
+          }
+          html += '</div>';
+
+          // Step 3
+          html += '<div class="step ' + (step === 3 ? 'active' : '') + '">' +
+            '<div class="step-head"><div class="step-num">3</div>' +
+            '<div class="step-title">Paste the key here</div></div>';
+          if (step === 3) {
+            html += '<div class="step-body">Paste the key you just created. It is never shown back to you, never logged, ' +
+              'and used exactly once to deliver it — then it is gone from our memory.</div>' +
+              '<input type="password" id="key-value" autocomplete="off" placeholder="rk_live_… or rk_test_…" />' +
+              '<br><button class="primary" id="submit-key">Verify and send</button>' +
+              '<div class="msg" id="step3-msg"></div>';
+          }
+          html += '</div>';
+
+          html += '<div class="foot">SOMA KeyDrop · the secret never rests anywhere but its destination.</div>';
+          appEl.innerHTML = html;
+
+          var a1 = el('attest-1'); if (a1) a1.addEventListener('click', function () { doStep({ action: 'attest', step: 1 }); });
+          var a2 = el('attest-2'); if (a2) a2.addEventListener('click', function () { doStep({ action: 'attest', step: 2 }); });
+          var sk = el('submit-key');
+          if (sk) sk.addEventListener('click', function () {
+            var v = el('key-value').value;
+            if (!v) { showStep3('Paste a value first.', 'err'); return; }
+            sk.disabled = true;
+            doStep({ action: 'verify', step: 3, value: v }).then(function () { sk.disabled = false; el('key-value').value = ''; });
+          });
+        }
+
+        function showStep3(text, kind) {
+          var m = el('step3-msg');
+          if (!m) return;
+          m.textContent = text;
+          m.className = 'msg ' + kind;
+        }
+
+        async function doStep(body) {
+          var r = await api('submit-key?ask=' + encodeURIComponent(askToken), { method: 'POST', body: body });
+          if (!r.ok) {
+            if (body.step === 3) showStep3((r.data && r.data.error) || 'Request failed.', 'err');
+            else renderCenter('Request failed: ' + ((r.data && r.data.error) || r.status));
+            return;
+          }
+          askState = r.data.ask;
+          if (body.step === 3 && r.data.refused) {
+            showStep3(r.data.message, 'err');
+          } else if (body.step === 3 && r.data.alt_path) {
+            showStep3(r.data.message + ' ' + r.data.alt_path, 'warn');
+          }
+          renderStepper();
+        }
+
+        async function loadAsk() {
+          if (!askToken) { renderCenter('No ask token in the URL. This link is incomplete.'); return; }
+          var r = await api('ask-state?ask=' + encodeURIComponent(askToken));
+          if (!r.ok) {
+            renderCenter((r.data && r.data.error) || 'This ask isn\'t available to your signed-in identity, or the link is invalid/expired.');
+            return;
+          }
+          askState = r.data.ask;
+          renderStepper();
+        }
+
+        SomaAuth.onAuthStateChange(function (event, s) {
+          if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN') {
+            if (!s || !s.user) {
+              location.replace('login.html' + (askToken ? ('?ask=' + encodeURIComponent(askToken)) : ''));
+              return;
+            }
+            session = s;
+            loadAsk();
+          } else if (event === 'SIGNED_OUT') {
+            location.replace('login.html' + (askToken ? ('?ask=' + encodeURIComponent(askToken)) : ''));
+          }
+        });
+        SomaAuth.init(window.SOMA_AUTH_CONFIG.url, window.SOMA_AUTH_CONFIG.anonKey);
+      })();
+    </script>
+
+    <script
+      src="/vendor/soma-feedback/soma-feedback.js"
+      data-site="soma-keydrop"
+      data-area="stepper"
+      data-no-google
+      defer
+    ></script>
+  </body>
+</html>

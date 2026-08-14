@@ -1,0 +1,9 @@
+{
+  "name": "soma-keydrop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SOMA KeyDrop v0 — authenticated inbound secret-handoff service (INERT build).",
+  "scripts": {
+    "test": "node test/run.mjs"
+  }
+}

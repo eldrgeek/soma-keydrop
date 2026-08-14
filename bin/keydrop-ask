@@ -1,0 +1,227 @@
+#!/opt/homebrew/bin/python3
+"""keydrop-ask — create/inspect SOMA KeyDrop asks (spec §2.8: fleet-only, Mike cc'd).
+
+Ask creation goes through the service-role key (never the anon key) because
+anon/authenticated has zero INSERT policy on keydrop_asks by design — the DB
+itself refuses non-fleet ask creation, this CLI is just the one intended path.
+
+Usage:
+  keydrop-ask create --provider stripe --bound-email <email> --requester <email>
+                      --site-url <https://your-site> --dest-env-key <KEY>
+                      [--test] [--session <label>] [--send-email] [--ttl-hours 72]
+  keydrop-ask list [--state open|completed|refused|expired] [--all]
+  keydrop-ask show <token>
+
+Inert-build rule (task §6): only --test asks may be created while KEYDROP_LIVE
+is false, and a --test ask's --bound-email must be one of the fleet's own
+addresses (never a real counterparty) — enforced here, not just documented.
+"""
+import argparse
+import hashlib
+import json
+import os
+import secrets
+import sys
+import urllib.request
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent.parent
+ENV_PATH = HERE / ".env"
+
+FLEET_ALLOWLIST = {
+    "claude@mike-wolf.com",
+    "mw@mike-wolf.com",
+}
+TEST_BOUND_ALLOWLIST = {
+    "mw@mike-wolf.com",
+    "claude@mike-wolf.com",
+}
+PROVIDER_DEFAULTS = {
+    "stripe": {
+        "provider_label": "Stripe",
+        "login_url": "https://dashboard.stripe.com/login",
+        "mint_url": "https://dashboard.stripe.com/apikeys/create",
+        "suggested_name": "soma-keydrop-restricted",
+        "scopes": [
+            "Charges — Write",
+            "Checkout Sessions — Write",
+            "Customers — Write",
+            "Webhook endpoints — Read",
+        ],
+    }
+}
+
+
+def load_env():
+    env = dict(os.environ)
+    if ENV_PATH.exists():
+        for line in ENV_PATH.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                env.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+    missing = [k for k in ("SUPABASE_URL", "SUPABASE_SERVICE_KEY") if not env.get(k)]
+    if missing:
+        sys.exit(f"keydrop-ask: missing {missing} — set in {ENV_PATH} or the environment")
+    return env
+
+
+def rest(env, method, path, body=None, params=None):
+    url = env["SUPABASE_URL"] + "/rest/v1/" + path
+    if params:
+        url += "?" + params
+    headers = {
+        "apikey": env["SUPABASE_SERVICE_KEY"],
+        "Authorization": f"Bearer {env['SUPABASE_SERVICE_KEY']}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, method=method, headers=headers, data=data)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw = resp.read()
+            return json.loads(raw) if raw else []
+    except urllib.error.HTTPError as e:
+        # Never let a raw error body reach stdout if we ever pass secrets through
+        # rest(); today's callers never do, but keep the habit.
+        detail = e.read().decode(errors="replace")[:300]
+        sys.exit(f"keydrop-ask: Supabase request failed ({e.code}): {detail}")
+
+
+def cmd_create(args, env):
+    requester = args.requester
+    if requester not in FLEET_ALLOWLIST:
+        sys.exit(f"keydrop-ask: requester '{requester}' is not on the fleet allowlist "
+                  f"({sorted(FLEET_ALLOWLIST)}). Add it deliberately, don't bypass this.")
+
+    is_live = env.get("KEYDROP_LIVE", "false").lower() == "true"
+    if not args.test and not is_live:
+        sys.exit("keydrop-ask: refusing to create a non-test ask — KEYDROP_LIVE is false "
+                  "(inert build). Pass --test, or flip KEYDROP_LIVE only after Locke + Mike's nod.")
+    if args.test and args.bound_email not in TEST_BOUND_ALLOWLIST:
+        sys.exit(f"keydrop-ask: --test asks may only bind to {sorted(TEST_BOUND_ALLOWLIST)} "
+                  f"(inert build never asks a real counterparty).")
+
+    provider_defaults = PROVIDER_DEFAULTS.get(args.provider, {})
+    token = secrets.token_hex(32)
+    ttl_at = (datetime.now(timezone.utc) + timedelta(hours=args.ttl_hours)).isoformat()
+
+    row = {
+        "token": token,
+        "requester": requester,
+        "bound_email": args.bound_email,
+        "provider": args.provider,
+        "policy": {"forbidden_prefix": "sk_", "required_prefix": "rk_"},
+        "destination": {"type": "netlify_env", "site_id": args.dest_site_id or "", "env_key": args.dest_env_key or ""},
+        "recipe": provider_defaults,
+        "test_only": bool(args.test),
+        "created_by_session": args.session,
+        "ttl_at": ttl_at,
+    }
+    created = rest(env, "POST", "keydrop_asks", body=row)
+    ask = created[0] if isinstance(created, list) else created
+    link = f"{args.site_url.rstrip('/')}/index.html?ask={token}"
+
+    print(f"created ask id={ask['id']} token={token[:8]}… test_only={ask['test_only']}")
+    print(f"link: {link}")
+
+    if args.send_email:
+        send_request_email(args, link)
+    else:
+        print("(--send-email not set — no mail sent. Message that WOULD be sent:)")
+        print(compose_request_email(args, link)[0])
+
+    return ask
+
+
+def compose_request_email(args, link):
+    subject = f"[SOMA KeyDrop] {PROVIDER_DEFAULTS.get(args.provider, {}).get('provider_label', args.provider)} key request"
+    body = (
+        f"Hi,\n\nA restricted {args.provider} key is needed. Click the link below, sign in as "
+        f"{args.bound_email}, and follow the three steps — nothing is asked of you until you're "
+        f"signed in as yourself.\n\n{link}\n\nThis link only works for {args.bound_email} and expires "
+        f"in {args.ttl_hours} hours.\n\n— Dee (SOMA KeyDrop)"
+    )
+    return body, subject
+
+
+def send_request_email(args, link):
+    body, subject = compose_request_email(args, link)
+    script = HERE.parent / "SOMA" / "tools" / "mail" / "send_from_claude.py"
+    if not script.exists():
+        print(f"keydrop-ask: send_from_claude.py not found at {script} — not sending.")
+        return
+    import subprocess, tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+        f.write(body)
+        body_path = f.name
+    cmd = [sys.executable, str(script), "--to", args.bound_email, "--subject", subject,
+           "--body-file", body_path, "--cc", "mw@mike-wolf.com"]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    os.unlink(body_path)
+    if r.returncode != 0:
+        print(f"keydrop-ask: ack email send failed (exit {r.returncode}): {r.stderr[:300]}")
+    else:
+        print("request email sent (cc mw@mike-wolf.com).")
+
+
+def cmd_list(args, env):
+    params = "select=id,token,requester,bound_email,provider,state,step,test_only,created_at&order=created_at.desc"
+    if args.state:
+        params += f"&state=eq.{args.state}"
+    if not args.all:
+        params += "&test_only=eq.true"
+    rows = rest(env, "GET", "keydrop_asks", params=params)
+    for r in rows:
+        print(f"{r['token'][:10]}…  {r['state']:9s} step={r['step']} test={r['test_only']} "
+              f"bound={r['bound_email']} provider={r['provider']} created={r['created_at']}")
+    if not rows:
+        print("(no asks)")
+
+
+def cmd_show(args, env):
+    rows = rest(env, "GET", "keydrop_asks", params=f"token=eq.{args.token}&select=*")
+    if not rows:
+        sys.exit("keydrop-ask: no such ask")
+    print(json.dumps(rows[0], indent=2))
+    audit = rest(env, "GET", "keydrop_audit", params=f"ask_id=eq.{rows[0]['id']}&select=*&order=ts.asc")
+    print(f"\n--- audit ({len(audit)} events) ---")
+    for a in audit:
+        print(f"{a['ts']}  {a['event']:20s} {json.dumps(a['detail'])}")
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    c = sub.add_parser("create")
+    c.add_argument("--provider", default="stripe")
+    c.add_argument("--bound-email", required=True)
+    c.add_argument("--requester", required=True)
+    c.add_argument("--site-url", required=True, help="the deployed KeyDrop site, e.g. https://soma-keydrop.netlify.app")
+    c.add_argument("--dest-site-id", default="")
+    c.add_argument("--dest-env-key", default="")
+    c.add_argument("--test", action="store_true")
+    c.add_argument("--session", default=None)
+    c.add_argument("--send-email", action="store_true")
+    c.add_argument("--ttl-hours", type=int, default=72)
+    c.set_defaults(func=cmd_create)
+
+    l = sub.add_parser("list")
+    l.add_argument("--state", default=None)
+    l.add_argument("--all", action="store_true", help="include non-test asks too")
+    l.set_defaults(func=cmd_list)
+
+    s = sub.add_parser("show")
+    s.add_argument("token")
+    s.set_defaults(func=cmd_show)
+
+    args = p.parse_args()
+    env = load_env()
+    args.func(args, env)
+
+
+if __name__ == "__main__":
+    main()
