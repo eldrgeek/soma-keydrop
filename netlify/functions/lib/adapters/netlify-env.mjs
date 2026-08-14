@@ -8,12 +8,31 @@
 // (KEYDROP_ADAPTER_PROBE_*), never the ask's real destination site/key. This is
 // what makes "hits the adapter in dry-run" (build task §7) an honest claim
 // rather than a stub.
+//
+// Locke F1 (destination allowlist): KEYDROP_NETLIFY_PAT is a full-account
+// token — Netlify PATs cannot be resource-scoped via API. Until the dedicated
+// keydrop-adapter PAT lands (Mike-gated key mint, tracked in KEYRING.md), the
+// only thing standing between a bad/poisoned ask row and "write to any site in
+// the account" is this allowlist. It applies whenever a live destination
+// site_id would actually be used, and fails CLOSED: an unset or empty
+// KEYDROP_DEST_SITE_ALLOWLIST refuses all live delivery rather than defaulting
+// open. Comma-separated Netlify site IDs.
+function destinationAllowed(siteId) {
+  const raw = process.env.KEYDROP_DEST_SITE_ALLOWLIST || '';
+  const allowlist = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  if (allowlist.length === 0) return false; // fail closed: unset/empty = nothing is allowed
+  return allowlist.includes(siteId);
+}
 
 const NETLIFY_API = 'https://api.netlify.com/api/v1';
 
 export async function deliver({ destination, fingerprint, isLive, selfSiteId }) {
   const pat = process.env.KEYDROP_NETLIFY_PAT;
   if (!pat) return { ok: false, reason: 'Adapter not configured (no KEYDROP_NETLIFY_PAT)' };
+
+  if (isLive && !destinationAllowed(destination.site_id)) {
+    return { ok: false, reason: 'Destination site is not on KEYDROP_DEST_SITE_ALLOWLIST — refusing live delivery.' };
+  }
 
   const siteId = isLive ? destination.site_id : selfSiteId;
   const envKey = isLive ? destination.env_key : `KEYDROP_ADAPTER_PROBE_${Date.now()}`;
@@ -42,8 +61,11 @@ export async function deliver({ destination, fingerprint, isLive, selfSiteId }) 
       body: JSON.stringify([{ key: envKey, values: [{ value: envValue, context: 'all' }] }]),
     });
     if (!put.ok) {
-      const body = await put.text().catch(() => '');
-      return { ok: false, reason: `Env write failed (${put.status})`, detail: body.slice(0, 200) };
+      // Locke F8 note A: the Netlify API error body was previously echoed back
+      // (truncated) as `detail`. The caller doesn't surface it today, but any
+      // future caller that logs the full adapter result would leak whatever
+      // Netlify echoes on a failed write of a secret value. Status code only.
+      return { ok: false, reason: `Env write failed (${put.status})` };
     }
 
     const deploy = await fetch(`${NETLIFY_API}/sites/${siteId}/builds`, {

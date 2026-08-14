@@ -128,7 +128,16 @@ export const handler = async (event) => {
     }
 
     // ---- Success: shape ok + real liveness proof + power ceiling already
-    // enforced (only rk_ ever reaches here). Deliver, then close.
+    // enforced (only rk_ ever reaches here). Deliver, then close — but
+    // closure must be DURABLE before the ask is marked completed (Locke F2).
+    // The old order marked `completed` before the ack attempt and swallowed
+    // any ack failure into a logged-but-invisible audit line — a live handoff
+    // could silently consume the ask with nobody notified. Fixed order:
+    // deliver -> record delivery -> attempt ack (not swallowed; a throw
+    // propagates to the outer catch, which returns a real error to the
+    // caller and leaves the ask `open`/step 3, retriable) -> only THEN mark
+    // `completed`. Delivery re-attempting on retry is idempotent (same
+    // key/destination, per Locke F8 note B) so this is safe to retry.
     const fp = fingerprint(row.provider, value);
     const destination = { ...(row.destination || {}), __value: value };
     const adapterResult = await netlifyEnv.deliver({
@@ -139,22 +148,25 @@ export const handler = async (event) => {
     });
     delete destination.__value; // out of scope for anything logged below
 
-    const updatedRows = await asService().update('keydrop_asks', `id=eq.${row.id}`, {
-      state: 'completed',
-      completed_at: new Date().toISOString(),
-      fingerprint: fp,
-    });
-    await audit(row.id, 'completed', {
+    await audit(row.id, 'delivered', {
       fingerprint: fp,
       account_id: probeResult.accountId || null,
       adapter: { ok: adapterResult.ok, mode: adapterResult.mode, reason: adapterResult.reason || null },
     });
 
-    const ackResult = await sendAcks({ isLive: LIVE, ask: row, fingerprint: fp }).catch((e) => ({
-      sent: false,
-      error: 'ack transport error (sanitized)',
-    }));
+    // No .catch() swallow here on purpose (Locke F2). If this throws (e.g.
+    // KEYDROP_LIVE=true before the ack transport is wired), the outer catch
+    // returns a real error to the caller and the ask stays open — never a
+    // silent success.
+    const ackResult = await sendAcks({ isLive: LIVE, ask: row, fingerprint: fp });
     await audit(row.id, 'ack', ackResult);
+
+    const updatedRows = await asService().update('keydrop_asks', `id=eq.${row.id}`, {
+      state: 'completed',
+      completed_at: new Date().toISOString(),
+      fingerprint: fp,
+    });
+    await audit(row.id, 'completed', { fingerprint: fp });
 
     return json(200, {
       message: 'Verified and delivered.',

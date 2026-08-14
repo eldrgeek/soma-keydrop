@@ -16,12 +16,19 @@
 
 export async function sendAcks({ isLive, ask, fingerprint }) {
   if (!isLive) {
-    return {
+    const result = {
       sent: false,
       mode: 'dry-run',
       would_send_to: [ask.bound_email, 'mw@mike-wolf.com'].filter(Boolean),
       reason: 'KEYDROP_LIVE=false — ack transport not wired for v0 (see docs/BUILD-2026-08-14.md)',
     };
+    // Locke F2: "dry-run log lines now" — this must be visible in Netlify
+    // function logs, not just recorded in the audit table, so a human
+    // scanning logs sees an ack was (correctly) not sent while inert. Never
+    // logs the fingerprint's raw provenance beyond what's already
+    // audit-safe (provider/prefix/last4/sha256 — never the key value).
+    console.log('[keydrop:ack] dry-run — would send to', result.would_send_to.join(', '), 'ask', ask.id);
+    return result;
   }
   // Live path intentionally not implemented in v0. Throwing here (rather than
   // silently no-op'ing) means a future flip of KEYDROP_LIVE without finishing

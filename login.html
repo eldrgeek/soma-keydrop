@@ -7,8 +7,8 @@
     <title>Sign in — SOMA KeyDrop</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔑</text></svg>" />
 
-    <!-- SOMA Auth (order matters: Supabase CDN, then config, then runtime). -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+    <!-- SOMA Auth (order matters: vendored Supabase build, then config, then runtime). -->
+    <script src="/vendor/supabase-js/supabase.js"></script>
     <script src="js/soma-auth-config.js"></script>
     <script src="js/soma-auth.js"></script>
 
@@ -70,57 +70,7 @@
       <div class="foot">Protected by SOMA Auth · KeyDrop never asks for your key here — only after you sign in.</div>
     </div>
 
-    <script>
-      (function () {
-        var q = new URLSearchParams(location.search);
-        var ask = q.get('ask');
-        var baseDir = location.href.replace(/login\.html.*$/, '');
-        // Preserve the ask token through the auth round trip. Never land back on login.html.
-        var appUrl = baseDir + 'index.html' + (ask ? ('?ask=' + encodeURIComponent(ask)) : '');
-
-        var methods = SomaAuth.getMethods();
-        var el = function (id) { return document.getElementById(id); };
-        var msg = el('msg'), emailInput = el('email'), primaryBtn = el('primary-btn');
-
-        function showMsg(text, kind) { msg.textContent = text; msg.className = 'msg ' + (kind || 'ok'); }
-
-        if (methods.oauth && methods.oauth.length) {
-          methods.oauth.forEach(function (provider) {
-            var meta = SomaAuth.providerMeta(provider);
-            var b = document.createElement('button');
-            b.className = 'google';
-            b.textContent = 'Continue with ' + meta.label;
-            b.addEventListener('click', function () {
-              SomaAuth.signInWithOAuth(provider, { redirectTo: appUrl }).then(function (r) {
-                if (r && r.error) showMsg(r.error.message, 'err');
-              });
-            });
-            el('oauth-slot').appendChild(b);
-          });
-        } else {
-          el('divider').style.display = 'none';
-        }
-
-        primaryBtn.addEventListener('click', function () {
-          var email = emailInput.value.trim();
-          if (!email) { showMsg('Enter your email.', 'err'); return; }
-          primaryBtn.disabled = true;
-          SomaAuth.signInWithOtp(email, { emailRedirectTo: appUrl }).then(function (r) {
-            primaryBtn.disabled = false;
-            if (r && r.error) { showMsg(r.error.message, 'err'); return; }
-            showMsg('Check your email for a sign-in link.', 'ok');
-          });
-        });
-        emailInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') primaryBtn.click(); });
-
-        SomaAuth.onAuthStateChange(function (event, session) {
-          if ((event === 'INITIAL_SESSION' || event === 'SIGNED_IN') && session && session.user) {
-            location.replace(appUrl);
-          }
-        });
-        SomaAuth.init(window.SOMA_AUTH_CONFIG.url, window.SOMA_AUTH_CONFIG.anonKey);
-      })();
-    </script>
+    <script src="/js/login-app.js"></script>
 
     <script
       src="/vendor/soma-feedback/soma-feedback.js"

@@ -1,0 +1,30 @@
+# Netlify _headers — SOMA KeyDrop v0 (Locke F3, 2026-08-14).
+#
+# This page holds a live secret (rk_live_... Stripe key) in a DOM password
+# field. The load-bearing line is connect-src: even if a script on this page
+# were compromised (injected or supply-chain), it cannot fetch/XHR/beacon
+# anywhere except our own origin, SOMA Auth, and the estate feedback service —
+# nowhere an attacker-controlled endpoint could receive the exfiltrated value.
+#
+# script-src has NO 'unsafe-inline' — index.html/login.html's inline <script>
+# blocks were extracted to /js/app.js and /js/login-app.js specifically so
+# this could be tight (an injected inline script literally cannot execute).
+# supabase-js is vendored locally (/vendor/supabase-js/) rather than loaded
+# from jsdelivr, so no third-party script origin is needed at all.
+#
+# style-src keeps 'unsafe-inline' (the page's CSS lives in <style> blocks in
+# <head>; low residual risk — style injection can't exfiltrate a password
+# field's value the way script injection can, and the connect-src restriction
+# neuters that vector regardless of source).
+#
+# https://vpsmikewolf.duckdns.org is the estate feedback-chip service
+# (vendor/soma-feedback/soma-feedback.js, required standard on every SOMA
+# site). Google One Tap is disabled site-wide via data-no-google on both
+# pages, so accounts.google.com is never contacted and is deliberately not
+# allow-listed here.
+
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://omfwcodoimjmbrhssvfl.supabase.co https://vpsmikewolf.duckdns.org; frame-ancestors 'none'; form-action 'self'; object-src 'none'; base-uri 'self'
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY

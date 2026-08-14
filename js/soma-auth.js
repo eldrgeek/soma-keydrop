@@ -4,7 +4,7 @@
  * Config comes from window.SOMA_AUTH_CONFIG (load soma-auth-config.js first).
  *
  * Load order in HTML:
- *   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+ *   <script src="/vendor/supabase-js/supabase.js"></script>
  *   <script src="/js/soma-auth-config.js"></script>
  *   <script src="/js/soma-auth.js"></script>
  *
