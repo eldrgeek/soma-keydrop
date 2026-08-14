@@ -25,16 +25,21 @@ export async function deliver({ destination, fingerprint, isLive, selfSiteId }) 
   const envValue = isLive ? destination.__value : `dry-run-probe-${fingerprint.sha256.slice(0, 12)}`;
 
   try {
-    const getEnv = await fetch(`${NETLIFY_API}/sites/${siteId}/env`, {
+    const site = await fetch(`${NETLIFY_API}/sites/${siteId}`, {
       headers: { Authorization: `Bearer ${pat}` },
     });
-    if (!getEnv.ok) return { ok: false, reason: `Could not reach site env (${getEnv.status})` };
+    if (!site.ok) return { ok: false, reason: `Could not reach site (${site.status})` };
+    const siteInfo = await site.json();
+    const accountId = siteInfo.account_slug || siteInfo.account_id;
 
-    // Netlify's supported write path: PUT /api/v1/sites/{site_id}/env/{key}
-    const put = await fetch(`${NETLIFY_API}/sites/${siteId}/env/${encodeURIComponent(envKey)}`, {
-      method: 'PUT',
+    // Envelope-based env vars (this account has use_envelope=true, confirmed
+    // 2026-08-14): env vars are account-scoped, associated to a site via the
+    // site_id query param. POST creates a new key (always true here — dry-run
+    // keys are timestamp-unique; live keys are created once per destination).
+    const put = await fetch(`${NETLIFY_API}/accounts/${accountId}/env?site_id=${siteId}`, {
+      method: 'POST',
       headers: { Authorization: `Bearer ${pat}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key: envKey, values: [{ value: envValue, context: 'all' }] }),
+      body: JSON.stringify([{ key: envKey, values: [{ value: envValue, context: 'all' }] }]),
     });
     if (!put.ok) {
       const body = await put.text().catch(() => '');

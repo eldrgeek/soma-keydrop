@@ -214,12 +214,14 @@
             return;
           }
           askState = r.data.ask;
-          if (body.step === 3 && r.data.refused) {
-            showStep3(r.data.message, 'err');
-          } else if (body.step === 3 && r.data.alt_path) {
-            showStep3(r.data.message + ' ' + r.data.alt_path, 'warn');
-          }
           renderStepper();
+          // renderStepper() rebuilds the DOM (fresh #step3-msg included), so the
+          // message must be set AFTER it, not before — otherwise the re-render
+          // wipes it out before it's ever visible.
+          if (body.step === 3 && r.data.message) {
+            var text = r.data.message + (r.data.alt_path ? ' ' + r.data.alt_path : '');
+            showStep3(text, r.data.alt_path ? 'warn' : 'err');
+          }
         }
 
         async function loadAsk() {
