@@ -104,7 +104,10 @@ def cmd_create(args, env):
         sys.exit(f"keydrop-ask: --test asks may only bind to {sorted(TEST_BOUND_ALLOWLIST)} "
                   f"(inert build never asks a real counterparty).")
 
-    provider_defaults = PROVIDER_DEFAULTS.get(args.provider, {})
+    provider_defaults = dict(PROVIDER_DEFAULTS.get(args.provider, {}))
+    if args.scope:
+        # The consuming app knows its own API calls; list exactly those scopes.
+        provider_defaults["scopes"] = list(args.scope)
     token = secrets.token_hex(32)
     ttl_at = (datetime.now(timezone.utc) + timedelta(hours=args.ttl_hours)).isoformat()
 
@@ -209,6 +212,8 @@ def main():
     c.add_argument("--session", default=None)
     c.add_argument("--send-email", action="store_true")
     c.add_argument("--ttl-hours", type=int, default=72)
+    c.add_argument("--scope", action="append", default=None,
+                   help="a permission to list on the key recipe; repeat it; replaces the provider defaults")
     c.set_defaults(func=cmd_create)
 
     l = sub.add_parser("list")
