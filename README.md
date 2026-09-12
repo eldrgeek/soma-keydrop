@@ -8,8 +8,11 @@ first, this README documents the build, not the design rationale.*
 bound to `mw@mike-wolf.com` or `claude@mike-wolf.com` are servable; no email
 leaves the estate; the delivery adapter only ever touches this site's own
 scratch env var, never a real destination. Gate order (spec §5): build inert →
-**Locke review (next)** → Mike's nod → live. See `docs/BUILD-2026-08-14.md`
-for what's proven vs. mocked and exactly where Locke should look first.
+Locke review (2026-08-14, completed) → Mike's nod → live. Locke findings F1,
+F2, F3, and F8 are applied in this tree, including destination allowlisting,
+durable ack queueing with a Mac-side sender, CSP/SRI hardening, and sanitized
+adapter failure handling. See `docs/BUILD-2026-08-14.md` for what's proven vs.
+mocked and exactly where Locke should look first.
 
 ## What this is
 
@@ -37,9 +40,10 @@ netlify/functions/
   lib/sanitize.mjs               — fingerprint() + safe error/JSON helpers
   lib/providers/stripe.mjs      — shape/liveness/power-ceiling policy + recipe copy
   lib/adapters/netlify-env.mjs  — destination adapter v0 (Netlify env var + redeploy)
-  lib/ack.mjs                   — closure-ack integration point (transport NOT wired, see docs)
+  lib/ack.mjs                   — closure-ack queue writer (`mode: queued` in live mode)
 supabase/schema.sql             — keydrop_asks + keydrop_audit, RLS policies (applied live)
 bin/keydrop-ask                 — fleet-allowlisted CLI: create/list/show asks
+bin/keydrop-ack-sender          — Mac-side queued-ack sender + ack_sent/ack_failed writes
 docs/BUILD-2026-08-14.md        — CSW build report for Locke + Mike
 test/                           — E2E harness (admin-link identity tests, curl scripts)
 ```
@@ -73,6 +77,19 @@ write path that didn't go through this sequence.
 | `SUPABASE_SERVICE_KEY` | dedicated `keydrop_netlify` secret key (Supabase Management API, not the shared legacy `service_role`) — server-only |
 | `KEYDROP_LIVE` | `false` in this build. Gates real delivery, real acks, and non-test asks. |
 | `KEYDROP_NETLIFY_PAT` | destination-adapter's own Netlify token — see `SOMA/keys/KEYRING.md` for scope/rotation notes |
+| `KEYDROP_DEST_SITE_ALLOWLIST` | comma-separated destination site IDs allowed for live delivery (fail-closed if unset/empty) |
+
+## Live switch-on checklist (Locke F9)
+
+Before setting `KEYDROP_LIVE=true`, verify all of the following:
+
+- `KEYDROP_DEST_SITE_ALLOWLIST` is set to the intended destination site ID(s).
+- `bin/keydrop-ack-sender` is installed on Mike's Mac and scheduled every 5
+  minutes (see `ops/launchd/com.soma.keydrop.ack-sender.plist.template`).
+- `KEYDROP_LIVE=true` is set on the KeyDrop Netlify site.
+- The KeyDrop site is redeployed after the env change.
+- A test ask bound to `claude@mike-wolf.com` completes end-to-end, including an
+  `ack` audit row with `mode: "queued"` followed by `ack_sent`.
 
 ## Proof (INERT build, 2026-08-14)
 

@@ -1,0 +1,87 @@
+#!/usr/bin/env node
+
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  ConfigError,
+  createSupabaseClient,
+  getSenderConfig,
+  processQueuedAcks,
+  sendViaClaudeMail,
+} from './lib/keydrop-ack-sender.mjs';
+
+function usage() {
+  return [
+    'Usage: keydrop-ack-sender [--dry-run]',
+    '',
+    'Reads queued ack rows from keydrop_audit, sends closure acks via',
+    'send_from_claude.py, and records ack_sent/ack_failed rows.',
+    '',
+    'Options:',
+    '  --dry-run   print what would be sent; send nothing',
+    '  -h, --help  show this help',
+  ].join('\n');
+}
+
+function parseArgs(argv) {
+  const args = new Set(argv.slice(2));
+  if (args.has('-h') || args.has('--help')) return { help: true, dryRun: false };
+  if (args.has('--dry-run')) {
+    args.delete('--dry-run');
+    return { help: false, dryRun: true, unknown: Array.from(args) };
+  }
+  return { help: false, dryRun: false, unknown: Array.from(args) };
+}
+
+async function main() {
+  const parsed = parseArgs(process.argv);
+  if (parsed.help) {
+    console.log(usage());
+    return 0;
+  }
+  if (parsed.unknown && parsed.unknown.length > 0) {
+    throw new ConfigError(`unknown arguments: ${parsed.unknown.join(' ')}`);
+  }
+
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const repoRoot = path.resolve(here, '..');
+  const config = getSenderConfig({ baseDir: repoRoot, env: process.env });
+  const supabase = createSupabaseClient({
+    supabaseUrl: config.supabaseUrl,
+    serviceKey: config.supabaseServiceKey,
+  });
+
+  const summary = await processQueuedAcks({
+    dryRun: parsed.dryRun,
+    supabase,
+    sendMail: (payload) =>
+      sendViaClaudeMail({
+        pythonBin: config.pythonBin,
+        mailScript: config.mailScript,
+        seat: config.seat,
+        ...payload,
+      }),
+    log: (...parts) => console.log(...parts),
+  });
+
+  console.log(
+    `summary queued=${summary.queued} sent=${summary.sent} failed=${summary.failed}` +
+      ` skipped_missing_ask=${summary.skippedMissingAsk} skipped_max_retries=${summary.skippedMaxRetries}`
+  );
+  return 0;
+}
+
+main()
+  .then((code) => {
+    process.exitCode = Number(code || 0);
+  })
+  .catch((err) => {
+    if (err instanceof ConfigError) {
+      console.error(`keydrop-ack-sender: configuration error: ${err.message}`);
+      process.exitCode = 1;
+      return;
+    }
+    const msg = err && err.message ? String(err.message) : 'unknown error';
+    console.error(`keydrop-ack-sender: runtime error (non-fatal): ${msg}`);
+    process.exitCode = 0;
+  });

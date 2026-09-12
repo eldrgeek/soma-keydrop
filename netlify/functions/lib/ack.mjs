@@ -1,18 +1,13 @@
 // Closure acks (spec §2.7). On completion: email acks from claude@ to the bound
 // identity + Mike + the requesting session's thread. Same sender identity as
 // SOMA/tools/mail/send_from_claude.py (claude@mike-wolf.com, Gmail SMTP + app
-// password) — but that script runs on Mike's Mac; a Netlify function runs off-Mac,
-// so live mode needs its own SMTP client (nodemailer + CLAUDE_GMAIL_APP_PASSWORD
-// as a Netlify env var). NOT WIRED YET — deliberately: this build is inert
-// (KEYDROP_LIVE=false) and the hard rule for this build is "no outward sends,
-// nothing to Stephanie, no real ack" (task §Hard rules). Flagged honestly here and
-// in docs/BUILD-2026-08-14.md rather than half-wiring a live sender that would
-// need a real credential and a real recipient to test.
+// password), which runs on Mike's Mac. To avoid putting mail credentials on
+// Netlify, the function-side live path queues owed acks in keydrop_audit and a
+// Mac-side cron/launchd sender delivers them.
 //
 // What IS proven: the closure call site (submit-key.mjs) calls this on every
 // completion path, in both live and dry-run modes, and this module always
-// returns a structured result the caller records in the audit trail — so the
-// integration point is real, only the transport is stubbed pending Locke + Mike.
+// returns a structured result the caller records in the audit trail.
 
 export async function sendAcks({ isLive, ask, fingerprint }) {
   if (!isLive) {
@@ -30,8 +25,13 @@ export async function sendAcks({ isLive, ask, fingerprint }) {
     console.log('[keydrop:ack] dry-run — would send to', result.would_send_to.join(', '), 'ask', ask.id);
     return result;
   }
-  // Live path intentionally not implemented in v0. Throwing here (rather than
-  // silently no-op'ing) means a future flip of KEYDROP_LIVE without finishing
-  // this function fails loudly instead of pretending to have sent an ack.
-  throw new Error('ack transport not implemented — do not set KEYDROP_LIVE=true until this is wired');
+  // Live path: queue the owed ack durably in keydrop_audit via submit-key's
+  // existing `audit(row.id, 'ack', ackResult)` call. A Mac-side sender consumes
+  // this queue and writes ack_sent / ack_failed follow-ups.
+  return {
+    sent: false,
+    mode: 'queued',
+    would_send_to: [ask.bound_email, 'mw@mike-wolf.com'].filter(Boolean),
+    reason: 'queued for the Mac ack sender',
+  };
 }
