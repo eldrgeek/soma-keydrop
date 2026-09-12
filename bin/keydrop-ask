@@ -171,7 +171,9 @@ def cmd_list(args, env):
     params = "select=id,token,requester,bound_email,provider,state,step,test_only,created_at&order=created_at.desc"
     if args.state:
         params += f"&state=eq.{args.state}"
-    if not args.all:
+    # While inert, hide everything but test asks by default. Once KEYDROP_LIVE is true the
+    # filter hid every real ask (found 2026-09-12), so it now applies only while inert.
+    if not args.all and str(env.get("KEYDROP_LIVE", "")).lower() != "true":
         params += "&test_only=eq.true"
     rows = rest(env, "GET", "keydrop_asks", params=params)
     for r in rows:

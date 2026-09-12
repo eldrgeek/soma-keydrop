@@ -4,15 +4,7 @@
 [`SOMA/specs/soma-keydrop-v0.md`](../SOMA/specs/soma-keydrop-v0.md) — read that
 first, this README documents the build, not the design rationale.*
 
-**Status: INERT.** Deployed, but `KEYDROP_LIVE=false` — only `--test` asks
-bound to `mw@mike-wolf.com` or `claude@mike-wolf.com` are servable; no email
-leaves the estate; the delivery adapter only ever touches this site's own
-scratch env var, never a real destination. Gate order (spec §5): build inert →
-Locke review (2026-08-14, completed) → Mike's nod → live. Locke findings F1,
-F2, F3, and F8 are applied in this tree, including destination allowlisting,
-durable ack queueing with a Mac-side sender, CSP/SRI hardening, and sanitized
-adapter failure handling. See `docs/BUILD-2026-08-14.md` for what's proven vs.
-mocked and exactly where Locke should look first.
+**Status: LIVE since 2026-09-12** (Mike's yes, 09-12). `KEYDROP_LIVE=true` on the Netlify site; delivery allowlisted to PlayMaker (`KEYDROP_DEST_SITE_ALLOWLIST`); closure acks queued in `keydrop_audit` and sent from the Mac by `com.soma.keydrop.ack-sender` (every 5 min, in job-liveness). See the switch-on checklist below.
 
 ## What this is
 
