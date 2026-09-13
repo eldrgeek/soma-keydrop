@@ -63,13 +63,21 @@ export async function probe(value) {
   // 403 means Stripe authenticated the key and it lacks permission to read the
   // account. That is the expected answer for a least-privilege restricted key
   // (e.g. Checkout Sessions / Customers / Prices only), so it proves the key is
-  // genuine and live. Only a permission_error counts; any other 403 falls through.
+  // genuine and live. Stripe's real body for this is type invalid_request_error
+  // with "The provided key 'rk_live_***…' does not have the required permissions
+  // for this endpoint on account 'acct_…'" (2026-09-13: the first fix matched
+  // only type permission_error and Mike's key was refused again). Accept either
+  // the documented type or that message; any other 403 still refuses.
   if (resp.status === 403) {
     let body = null;
     try { body = await resp.json(); } catch { /* unreadable: treat as unexpected below */ }
-    if (body && body.error && body.error.type === 'permission_error') {
-      return { ok: true, accountId: null };
+    const err = (body && body.error) || {};
+    const message = String(err.message || '');
+    if (err.type === 'permission_error' || /does not have the required permissions/i.test(message)) {
+      const account = message.match(/on account '(acct_[A-Za-z0-9]+)'/);
+      return { ok: true, accountId: account ? account[1] : null };
     }
+    console.warn('[keydrop:stripe] unexpected 403 while probing', { type: err.type || null, code: err.code || null });
     return { ok: false, reason: 'Stripe returned an unexpected error (403) while verifying the key.' };
   }
   if (!resp.ok) {
