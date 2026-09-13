@@ -58,7 +58,16 @@ export async function deliver({ destination, fingerprint, isLive, selfSiteId }) 
     const put = await fetch(`${NETLIFY_API}/accounts/${accountId}/env?site_id=${siteId}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${pat}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify([{ key: envKey, values: [{ value: envValue, context: 'all' }] }]),
+      // is_secret makes the value write-only: the Netlify UI, CLI and API stop
+      // returning it, so no later session on the Mac can read the key back
+      // (2026-09-13: PlayMaker's STRIPE_SECRET_KEY landed readable). Netlify
+      // refuses secret values in the 'all' and 'dev' contexts, so list the
+      // deploy contexts explicitly.
+      body: JSON.stringify([{
+        key: envKey,
+        is_secret: true,
+        values: ['production', 'deploy-preview', 'branch-deploy'].map((context) => ({ value: envValue, context })),
+      }]),
     });
     if (!put.ok) {
       // Locke F8 note A: the Netlify API error body was previously echoed back
