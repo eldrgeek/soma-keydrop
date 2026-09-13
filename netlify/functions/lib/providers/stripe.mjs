@@ -60,6 +60,18 @@ export async function probe(value) {
   if (resp.status === 401) {
     return { ok: false, reason: 'Stripe rejected that key as invalid or revoked.' };
   }
+  // 403 means Stripe authenticated the key and it lacks permission to read the
+  // account. That is the expected answer for a least-privilege restricted key
+  // (e.g. Checkout Sessions / Customers / Prices only), so it proves the key is
+  // genuine and live. Only a permission_error counts; any other 403 falls through.
+  if (resp.status === 403) {
+    let body = null;
+    try { body = await resp.json(); } catch { /* unreadable: treat as unexpected below */ }
+    if (body && body.error && body.error.type === 'permission_error') {
+      return { ok: true, accountId: null };
+    }
+    return { ok: false, reason: 'Stripe returned an unexpected error (403) while verifying the key.' };
+  }
   if (!resp.ok) {
     return { ok: false, reason: `Stripe returned an unexpected error (${resp.status}) while verifying the key.` };
   }

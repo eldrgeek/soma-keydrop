@@ -1,9 +1,11 @@
 import { run as runAckTests } from './ack.test.mjs';
 import { run as runSenderTests } from './keydrop-ack-sender.test.mjs';
+import { run as runStripeProbeTests } from './stripe-probe.test.mjs';
 
 const suites = [
   ['ack.test.mjs', runAckTests],
   ['keydrop-ack-sender.test.mjs', runSenderTests],
+  ['stripe-probe.test.mjs', runStripeProbeTests],
 ];
 
 let failures = 0;
